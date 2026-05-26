@@ -4,12 +4,12 @@ import { useEffect, useState } from 'react';
 import { Plus, RefreshCw, Package, Clock, CheckCircle } from 'lucide-react';
 import type { LtlQuote } from '@/lib/types';
 
+const DEFAULT_MARKUP = 25;
+
 const FREIGHT_CLASSES = [
   '50', '55', '60', '65', '70', '77.5', '85', '92.5',
   '100', '110', '125', '150', '175', '200', '250', '300', '400', '500',
 ];
-
-const DEFAULT_MARKUP = 25;
 
 export default function LtlPage() {
   const [quotes, setQuotes] = useState<LtlQuote[]>([]);
@@ -303,5 +303,3 @@ function QuoteCard({
     </div>
   );
 }
-
-const DEFAULT_MARKUP = 25;
