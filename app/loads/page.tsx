@@ -22,6 +22,7 @@ export default function LoadsPage() {
   const [editAmounts, setEditAmounts] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState<string>('all');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [totalLoads, setTotalLoads] = useState<number>(0);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -34,6 +35,7 @@ export default function LoadsPage() {
         const res = await fetch(`/api/loads?page=${page}`).then(r => r.json());
         const pageData: Load[] = res.data ?? [];
         total = res.total ?? 0;
+        setTotalLoads(total);
         allLoads = [...allLoads, ...pageData];
         if (pageData.length === 0) break;
         page++;
@@ -136,7 +138,7 @@ export default function LoadsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">Veritread Loads</h1>
           <p className="text-gray-400 mt-1 text-sm">
-            {loads.length} loads scraped · {Object.values(bids).filter(b => b.status === 'pending_approval').length} pending your approval
+            {totalLoads.toLocaleString()} loads scraped · {Object.values(bids).filter(b => b.status === 'pending_approval').length} pending your approval
           </p>
         </div>
         <button
@@ -176,8 +178,24 @@ export default function LoadsPage() {
       {!loading && filteredLoads.length === 0 && (
         <div className="text-center py-20">
           <Truck size={48} className="text-gray-700 mx-auto mb-4" />
-          <p className="text-gray-400">No loads found. Run the daemon to scrape Veritread.</p>
-          <code className="text-xs text-gray-600 mt-2 block">cd ~/veritread_bidder && python3 daemon/main.py --scrape-only</code>
+          {filter === 'all' && (
+            <>
+              <p className="text-gray-400">No loads yet — daemon is scraping Veritread every 15 min.</p>
+              <p className="text-xs text-gray-600 mt-2">Or run locally: <code>cd freight-bidder/daemon && python3 main.py --scrape-only</code></p>
+            </>
+          )}
+          {filter === 'no_bid' && (
+            <p className="text-gray-400">All loads have been estimated. ✅</p>
+          )}
+          {filter === 'pending' && (
+            <p className="text-gray-400">No loads pending approval — the daemon is estimating new loads automatically.</p>
+          )}
+          {filter === 'submitted' && (
+            <>
+              <p className="text-gray-400 mb-1">No bids submitted yet.</p>
+              <p className="text-sm text-gray-600">Approve bids in the <button onClick={() => setFilter('pending')} className="text-yellow-400 underline">Pending Approval</button> tab — the daemon will submit them on the next run.</p>
+            </>
+          )}
         </div>
       )}
 
