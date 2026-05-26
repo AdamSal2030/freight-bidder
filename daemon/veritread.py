@@ -139,20 +139,20 @@ class VeritreadBot:
                 let card = a.closest('[class]');
                 const text = card ? card.innerText : a.innerText;
                 const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-                const cityRe = /([A-Za-z][A-Za-z\s]{1,25},\s*[A-Z]{2})/g;
+                const cityRe = /([A-Za-z][A-Za-z ]{1,25},\s*[A-Z]{2})/g;
                 const locs = []; let loc;
                 while ((loc = cityRe.exec(text)) !== null) locs.push(loc[1].trim());
                 results.push({
                     load_id:        m[1],
                     load_number:    (text.match(/Load\s*#\s*(\d+)/i) || [])[1] || '',
                     equipment_name: lines[0] || '',
-                    length:  (text.match(/Length\s+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i) || [])[1] || '',
-                    width:   (text.match(/Width\s+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i)  || [])[1] || '',
-                    height:  (text.match(/Height\s+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i) || [])[1] || '',
-                    weight:  (text.match(/Weight\s+([\d,]+\s*lbs)/i)                      || [])[1] || '',
+                    length:  (text.match(/Length[:\s]+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i) || [])[1] || '',
+                    width:   (text.match(/Width[:\s]+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i)  || [])[1] || '',
+                    height:  (text.match(/Height[:\s]+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i) || [])[1] || '',
+                    weight:  (text.match(/Weight[:\s]+([\d,]+\s*lbs)/i)                      || [])[1] || '',
                     time_remaining: ((text.match(/(\d+\s+(?:Days?|Hours?|Minutes?)[^]*?)(?:\n|$)/i) || [])[0] || '').trim(),
-                    origin:      locs[0] || '',
-                    destination: locs[1] || '',
+                    origin:      locs[0] ? locs[0].replace(/^[^A-Za-z]+/, '').trim() : '',
+                    destination: locs[1] ? locs[1].replace(/^[^A-Za-z]+/, '').trim() : '',
                 });
             }
             return results;

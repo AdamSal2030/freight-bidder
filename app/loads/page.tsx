@@ -25,17 +25,29 @@ export default function LoadsPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    const [loadsRes, bidsRes] = await Promise.all([
-      fetch('/api/loads').then(r => r.json()),
-      fetch('/api/bids').then(r => r.json()),
-    ]);
+    try {
+      // Fetch all loads via pagination (500 per page)
+      let allLoads: Load[] = [];
+      let page = 1;
+      let total = Infinity;
+      while (allLoads.length < total) {
+        const res = await fetch(`/api/loads?page=${page}`).then(r => r.json());
+        const pageData: Load[] = res.data ?? [];
+        total = res.total ?? 0;
+        allLoads = [...allLoads, ...pageData];
+        if (pageData.length === 0) break;
+        page++;
+      }
 
-    const bidsArr: BidWithLoad[] = Array.isArray(bidsRes) ? bidsRes : [];
-    const bidMap: Record<string, Bid> = {};
-    bidsArr.forEach(b => { bidMap[b.load_id] = b; });
-    setBids(bidMap);
-    setLoads(Array.isArray(loadsRes) ? loadsRes : []);
-    setLoading(false);
+      const bidsRes = await fetch('/api/bids').then(r => r.json());
+      const bidsArr: BidWithLoad[] = Array.isArray(bidsRes) ? bidsRes : [];
+      const bidMap: Record<string, Bid> = {};
+      bidsArr.forEach(b => { bidMap[b.load_id] = b; });
+      setBids(bidMap);
+      setLoads(allLoads);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
