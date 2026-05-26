@@ -58,6 +58,15 @@ export async function POST(req: Request) {
 
   try {
     const estimate = await estimateCarrierRate(l);
+
+    if (!estimate.carrier_rate || estimate.carrier_rate <= 0 || !estimate.distance_miles) {
+      await db.from('loads').update({ status: 'new' }).eq('load_id', load_id);
+      return NextResponse.json(
+        { error: 'AI returned an invalid rate ($0). Load data may be incomplete — try again.' },
+        { status: 422 }
+      );
+    }
+
     const marginPct = await getMarginPct(estimate.distance_miles);
     const suggestedBid = calculateBid(estimate.carrier_rate, marginPct);
 
@@ -87,6 +96,17 @@ export async function POST(req: Request) {
     await db.from('loads').update({ status: 'new' }).eq('load_id', load_id);
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
+}
+
+// DELETE /api/bids — reset a bid so the load can be re-estimated
+export async function DELETE(req: Request) {
+  const { bid_id, load_id } = await req.json() as { bid_id: string; load_id: string };
+  const db = createServerClient();
+
+  await db.from('bids').delete().eq('id', bid_id);
+  await db.from('loads').update({ status: 'new' }).eq('load_id', load_id);
+
+  return NextResponse.json({ ok: true });
 }
 
 // PATCH /api/bids — update final_bid or status (approve/skip)

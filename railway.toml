@@ -1,0 +1,5 @@
+[build]
+dockerfilePath = "daemon/Dockerfile"
+
+[deploy]
+restartPolicyType = "always"

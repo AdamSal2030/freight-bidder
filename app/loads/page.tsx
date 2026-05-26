@@ -21,6 +21,7 @@ export default function LoadsPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editAmounts, setEditAmounts] = useState<Record<string, string>>({});
   const [filter, setFilter] = useState<string>('all');
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -50,17 +51,20 @@ export default function LoadsPage() {
 
   async function handleEstimate(loadId: string) {
     setEstimating(prev => new Set(prev).add(loadId));
+    setErrors(prev => { const s = { ...prev }; delete s[loadId]; return s; });
     try {
       const res = await fetch('/api/bids', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ load_id: loadId }),
       });
+      const data = await res.json();
       if (res.ok) {
-        const bid = await res.json();
-        setBids(prev => ({ ...prev, [loadId]: bid }));
-        setEditAmounts(prev => ({ ...prev, [bid.id]: String(bid.final_bid) }));
-        // Auto-expand
+        setBids(prev => ({ ...prev, [loadId]: data }));
+        setEditAmounts(prev => ({ ...prev, [data.id]: String(data.final_bid) }));
+        setExpanded(prev => new Set(prev).add(loadId));
+      } else {
+        setErrors(prev => ({ ...prev, [loadId]: data.error ?? 'Estimation failed' }));
         setExpanded(prev => new Set(prev).add(loadId));
       }
     } finally {
@@ -92,6 +96,17 @@ export default function LoadsPage() {
       const updated = await res.json();
       setBids(prev => ({ ...prev, [loadId]: updated }));
     }
+  }
+
+  async function handleRetry(bid: Bid, loadId: string) {
+    // Delete bad bid, reset load to 'new', then re-estimate
+    await fetch('/api/bids', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bid_id: bid.id, load_id: loadId }),
+    });
+    setBids(prev => { const s = { ...prev }; delete s[loadId]; return s; });
+    await handleEstimate(loadId);
   }
 
   function toggleExpand(loadId: string) {
@@ -160,6 +175,8 @@ export default function LoadsPage() {
           const isExpanded = expanded.has(load.load_id);
           const isEstimating = estimating.has(load.load_id);
           const editVal = bid ? (editAmounts[bid.id] ?? String(bid.final_bid)) : '';
+          const estimateError = errors[load.load_id];
+          const isBadBid = bid && (!bid.carrier_rate || bid.carrier_rate <= 0);
 
           return (
             <div key={load.load_id} className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
@@ -297,10 +314,62 @@ export default function LoadsPage() {
                           <XCircle size={16} /> Skipped
                         </div>
                       )}
+
+                      {bid.status === 'error' && (
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center gap-2 text-red-400 text-sm">
+                            <AlertTriangle size={15} /> Bid submission failed
+                          </span>
+                          <button
+                            onClick={() => handleRetry(bid, load.load_id)}
+                            disabled={isEstimating}
+                            className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5"
+                          >
+                            <RefreshCw size={11} className={isEstimating ? 'animate-spin' : ''} />
+                            Re-estimate & Retry
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
 
-                  {!bid && (
+                  {/* Error state with retry */}
+                  {estimateError && (
+                    <div className="flex items-start gap-3 bg-red-900/30 border border-red-800 rounded-xl p-4">
+                      <AlertTriangle size={16} className="text-red-400 mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm text-red-300 mb-2">{estimateError}</p>
+                        <button
+                          onClick={() => handleEstimate(load.load_id)}
+                          disabled={isEstimating}
+                          className="px-4 py-1.5 bg-red-700 hover:bg-red-600 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                        >
+                          <RefreshCw size={12} className={isEstimating ? 'animate-spin' : ''} />
+                          {isEstimating ? 'Retrying…' : 'Retry Estimate'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Bad bid (carrier_rate = 0) with retry */}
+                  {isBadBid && (
+                    <div className="flex items-start gap-3 bg-orange-900/30 border border-orange-800 rounded-xl p-4">
+                      <AlertTriangle size={16} className="text-orange-400 mt-0.5 shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-sm text-orange-300 mb-2">AI returned a $0 rate — load data may be incomplete. Click retry to try again.</p>
+                        <button
+                          onClick={() => handleRetry(bid, load.load_id)}
+                          disabled={isEstimating}
+                          className="px-4 py-1.5 bg-orange-700 hover:bg-orange-600 text-white rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5"
+                        >
+                          <RefreshCw size={12} className={isEstimating ? 'animate-spin' : ''} />
+                          {isEstimating ? 'Retrying…' : 'Retry Estimate'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {!bid && !estimateError && (
                     <button
                       onClick={() => handleEstimate(load.load_id)}
                       disabled={isEstimating}

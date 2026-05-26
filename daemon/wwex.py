@@ -31,6 +31,7 @@ class WwexBot:
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         )
         self.page = await ctx.new_page()
+        self.page.set_default_timeout(60000)
 
     async def close(self):
         if self._browser:
@@ -42,8 +43,8 @@ class WwexBot:
         email = os.environ["WWEX_EMAIL"]
         password = os.environ["WWEX_PASSWORD"]
 
-        await self.page.goto(WWEX_URL)
-        await self.page.wait_for_load_state("networkidle")
+        await self.page.goto(WWEX_URL, wait_until="domcontentloaded")
+        await self.page.wait_for_timeout(2000)
 
         # Look for login/sign-in button or direct form
         login_btn = self.page.locator(
@@ -51,8 +52,8 @@ class WwexBot:
         ).first
         if await login_btn.count() and await login_btn.is_visible():
             await login_btn.click()
-            await self.page.wait_for_load_state("networkidle")
-            await self.page.wait_for_timeout(1500)
+            await self.page.wait_for_load_state("domcontentloaded")
+            await self.page.wait_for_timeout(2000)
 
         # Fill credentials
         email_inp = self.page.locator('input[type="email"], input[name="email"], input[name="username"]').first
@@ -64,7 +65,7 @@ class WwexBot:
 
         submit = self.page.locator('button[type="submit"], button:has-text("Log In"), button:has-text("Sign In")').first
         await submit.click()
-        await self.page.wait_for_load_state("networkidle")
+        await self.page.wait_for_load_state("domcontentloaded")
         await self.page.wait_for_timeout(2000)
         print("✅ WWEX login OK")
 
@@ -116,14 +117,14 @@ class WwexBot:
         try:
             # Try the quote / rate page
             await self.page.goto(f"{WWEX_URL}/ship/ltl-freight")
-            await self.page.wait_for_load_state("networkidle")
+            await self.page.wait_for_load_state("domcontentloaded")
             await self.page.wait_for_timeout(2000)
 
             # If the page didn't work, try finding a "Get a Quote" or "Rate" link
             if "404" in await self.page.title() or not await self.page.locator('input').count():
                 for path in ["/shipping-rate-quote", "/get-a-quote", "/quote", "/ltl"]:
                     await self.page.goto(f"{WWEX_URL}{path}")
-                    await self.page.wait_for_load_state("networkidle")
+                    await self.page.wait_for_load_state("domcontentloaded")
                     if await self.page.locator('input').count():
                         break
 
@@ -168,7 +169,7 @@ class WwexBot:
                 'button:has-text("Quote"), button:has-text("Calculate")'
             ).first
             await submit.click()
-            await self.page.wait_for_load_state("networkidle")
+            await self.page.wait_for_load_state("domcontentloaded")
             await self.page.wait_for_timeout(3000)
 
             # Extract lowest rate

@@ -31,6 +31,7 @@ class VeritreadBot:
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
         )
         self.page = await ctx.new_page()
+        self.page.set_default_timeout(60000)  # 60s global timeout
 
     async def close(self):
         if self._browser:
@@ -40,34 +41,63 @@ class VeritreadBot:
 
     # ------------------------------------------------------------------ login
     async def login(self):
+        """Login only when needed (e.g. for bid submission). Scraping is public."""
+        await self.page.goto(f"{BASE}/carrier/", wait_until="load")
+        await self.page.wait_for_timeout(2000)
+        # Carrier board is publicly accessible — no login needed for scraping
+        print("✅ Veritread carrier board accessible")
+
+    async def force_login(self):
+        """Authenticate so we can submit bids on behalf of the account."""
         email = os.environ["VERITREAD_EMAIL"]
         password = os.environ["VERITREAD_PASSWORD"]
 
-        await self.page.goto(f"{BASE}/carrier/")
-        await self.page.wait_for_load_state("networkidle")
-
-        # Try direct login paths
-        for path in ["/login", "/signin", "/account/login"]:
-            await self.page.goto(f"{BASE}{path}")
-            await self.page.wait_for_load_state("networkidle")
-            if await self.page.locator('input[type="email"]').count():
+        # Navigate directly to login page
+        for path in ["/login", "/account/login", "/signin"]:
+            await self.page.goto(f"{BASE}{path}", wait_until="load")
+            await self.page.wait_for_timeout(2000)
+            if await self.page.locator('input[type="email"], input[type="text"][name*="email" i]').count():
                 break
 
-        await self.page.locator('input[type="email"]').first.fill(email)
+        email_inp = self.page.locator(
+            'input[type="email"], input[type="text"][name*="email" i], input[placeholder*="email" i]'
+        ).first
+        if not await email_inp.count():
+            # Try clicking a "Sign In" link from the main page first
+            await self.page.goto(BASE, wait_until="load")
+            await self.page.wait_for_timeout(2000)
+            sign_in = self.page.locator('a:has-text("Sign In"), a:has-text("Login"), a:has-text("Log In")').first
+            if await sign_in.count():
+                await sign_in.click()
+                await self.page.wait_for_load_state("domcontentloaded")
+                await self.page.wait_for_timeout(2000)
+            email_inp = self.page.locator('input[type="email"]').first
+
+        if not await email_inp.count():
+            raise RuntimeError("Could not find login form on Veritread")
+
+        await email_inp.fill(email)
         await self.page.locator('input[type="password"]').first.fill(password)
-        await self.page.locator(
-            'button[type="submit"], button:has-text("Sign In"), button:has-text("Log In")'
-        ).first.click()
-        await self.page.wait_for_load_state("networkidle")
-        await self.page.wait_for_timeout(2000)
-        print("✅ Veritread login OK")
+
+        submit = self.page.locator('button[type="submit"], input[type="submit"]').first
+        if await submit.count():
+            await submit.click()
+        else:
+            await self.page.keyboard.press("Enter")
+
+        await self.page.wait_for_load_state("domcontentloaded")
+        await self.page.wait_for_timeout(3000)
+
+        # Verify we got in by checking for user-specific elements or redirect
+        url = self.page.url
+        title = await self.page.title()
+        print(f"✅ Veritread login OK — {url}")
 
     # --------------------------------------------------------------- scraping
-    async def scrape_loads(self, max_pages: int = 3) -> int:
+    async def scrape_loads(self, max_loads: int = 5000) -> int:
         db = get_db()
-        await self.page.goto(f"{BASE}/carrier/")
-        await self.page.wait_for_load_state("networkidle")
-        await self.page.wait_for_timeout(2000)
+        await self.page.goto(f"{BASE}/carrier/", wait_until="load")
+        await self.page.wait_for_timeout(3000)
 
         # Domestic tab
         dom_btn = self.page.locator('button:has-text("Domestic")').first
@@ -75,57 +105,71 @@ class VeritreadBot:
             await dom_btn.click()
             await self.page.wait_for_timeout(1000)
 
-        total_new = 0
-        for _ in range(max_pages):
-            await self.page.wait_for_selector('a[href*="/carrier/load/"]', timeout=15000)
-
-            loads = await self.page.evaluate(r"""() => {
-                const results = [];
-                const seen = new Set();
-                for (const a of document.querySelectorAll('a[href*="/carrier/load/"]')) {
-                    const m = a.href.match(/\/load\/([a-f0-9\-]{36})/i);
-                    if (!m || seen.has(m[1])) continue;
-                    seen.add(m[1]);
-                    let card = a.closest('[class]');
-                    const text = card ? card.innerText : a.innerText;
-                    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-                    const cityRe = /([A-Za-z][A-Za-z\s]{1,25},\s*[A-Z]{2})/g;
-                    const locs = []; let loc;
-                    while ((loc = cityRe.exec(text)) !== null) locs.push(loc[1].trim());
-                    results.push({
-                        load_id:        m[1],
-                        load_number:    (text.match(/Load\s*#\s*(\d+)/i) || [])[1] || '',
-                        equipment_name: lines[0] || '',
-                        length:  (text.match(/Length\s+([\d]+\s*ft[\s\d]*in)/i) || [])[1] || '',
-                        width:   (text.match(/Width\s+([\d]+\s*ft[\s\d]*in)/i)  || [])[1] || '',
-                        height:  (text.match(/Height\s+([\d]+\s*ft[\s\d]*in)/i) || [])[1] || '',
-                        weight:  (text.match(/Weight\s+([\d,]+\s*lbs)/i)        || [])[1] || '',
-                        time_remaining: ((text.match(/(\d+\s+(?:Days?|Hours?|Minutes?)[^]*?)(?:\n|$)/i) || [])[0] || '').trim(),
-                        origin:      locs[0] || '',
-                        destination: locs[1] || '',
-                    });
-                }
-                return results;
-            }""")
-
-            for load in loads:
-                # Upsert — ignore if already exists
-                result = db.table("loads").upsert(
-                    {**load, "status": "new"},
-                    on_conflict="load_id",
-                    ignore_duplicates=True,
-                ).execute()
-                if result.data:
-                    total_new += len(result.data)
-
-            # Next page
-            nxt = self.page.locator('button:has-text("Next"), a:has-text("Next")').first
-            if await nxt.count() and await nxt.is_visible():
-                await nxt.click()
-                await self.page.wait_for_load_state("networkidle")
-                await self.page.wait_for_timeout(1500)
-            else:
+        # Scroll until all loads are loaded (infinite scroll)
+        prev_count = 0
+        stall_count = 0
+        while True:
+            current_count = await self.page.locator('a[href*="/carrier/load/"]').count()
+            print(f"  📄 {current_count} load links visible…", end="\r")
+            if current_count >= max_loads:
                 break
+            if current_count == prev_count:
+                stall_count += 1
+                if stall_count >= 6:
+                    break  # truly no more after 6 stalled scrolls (~18s)
+            else:
+                stall_count = 0
+            prev_count = current_count
+            # Scroll to bottom, then slightly back to trigger loader
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.page.wait_for_timeout(1500)
+            await self.page.evaluate("window.scrollTo(0, document.body.scrollHeight - 200)")
+            await self.page.wait_for_timeout(1500)
+
+        print()  # newline after \r
+
+        # Extract all load data in one JS pass
+        loads = await self.page.evaluate(r"""() => {
+            const results = [];
+            const seen = new Set();
+            for (const a of document.querySelectorAll('a[href*="/carrier/load/"]')) {
+                const m = a.href.match(/\/load\/([a-f0-9\-]{36})/i);
+                if (!m || seen.has(m[1])) continue;
+                seen.add(m[1]);
+                let card = a.closest('[class]');
+                const text = card ? card.innerText : a.innerText;
+                const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+                const cityRe = /([A-Za-z][A-Za-z\s]{1,25},\s*[A-Z]{2})/g;
+                const locs = []; let loc;
+                while ((loc = cityRe.exec(text)) !== null) locs.push(loc[1].trim());
+                results.push({
+                    load_id:        m[1],
+                    load_number:    (text.match(/Load\s*#\s*(\d+)/i) || [])[1] || '',
+                    equipment_name: lines[0] || '',
+                    length:  (text.match(/Length\s+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i) || [])[1] || '',
+                    width:   (text.match(/Width\s+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i)  || [])[1] || '',
+                    height:  (text.match(/Height\s+([\d.]+\s*(?:ft|')[\s\d"]*(?:in)?)/i) || [])[1] || '',
+                    weight:  (text.match(/Weight\s+([\d,]+\s*lbs)/i)                      || [])[1] || '',
+                    time_remaining: ((text.match(/(\d+\s+(?:Days?|Hours?|Minutes?)[^]*?)(?:\n|$)/i) || [])[0] || '').trim(),
+                    origin:      locs[0] || '',
+                    destination: locs[1] || '',
+                });
+            }
+            return results;
+        }""")
+
+        print(f"  💾 Saving {len(loads)} loads to Supabase…")
+        total_new = 0
+        # Batch upsert in chunks of 100
+        for i in range(0, len(loads), 100):
+            chunk = loads[i:i+100]
+            result = db.table("loads").upsert(
+                [{**l, "status": "new"} for l in chunk],
+                on_conflict="load_id",
+                ignore_duplicates=True,
+            ).execute()
+            if result.data:
+                total_new += len(result.data)
 
         return total_new
 

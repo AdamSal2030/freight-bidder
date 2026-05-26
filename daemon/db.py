@@ -1,8 +1,10 @@
 """Supabase client wrapper for the daemon."""
+from __future__ import annotations
 import os
+from typing import Optional
 from supabase import create_client, Client
 
-_client: Client | None = None
+_client: Optional[Client] = None
 
 def get_db() -> Client:
     global _client
